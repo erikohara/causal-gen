@@ -73,7 +73,7 @@ class BasePGM(nn.Module):
     ) -> Dict[str, Tensor]:
         # NOTE: not ideal as "variables" is defined in child class
         dag_variables = self.variables.keys()
-        assert set(obs.keys()) == set(dag_variables)
+        #assert set(obs.keys()) == set(dag_variables)
         avg_cfs = {k: torch.zeros_like(obs[k]) for k in obs.keys()}
         batch_size = list(obs.values())[0].shape[0]
 
@@ -106,6 +106,95 @@ class BasePGM(nn.Module):
             for k, v in counterfactuals.items():
                 avg_cfs[k] += v / num_particles
         return avg_cfs
+    
+class SimBAPGM(BasePGM):
+    def __init__(self, args: Hparams):
+        super().__init__()
+        self.variables = {
+            "class_label": "binary",
+            "bias_label": "binary"
+        }
+        # priors: c, b
+        self.c_logit = nn.Parameter(torch.zeros(1))
+        self.b_logit = nn.Parameter(torch.zeros(1))
+
+        # anticausal predictors
+        input_shape = (args.input_channels, args.input_res, args.input_res)
+
+        # q(c| x) = Bernoulli(f(x))
+        self.encoder_c = CNN(input_shape, num_outputs=1)
+        # q(b| x) = Bernoulli(f(x))
+        self.encoder_b = CNN(input_shape, num_outputs=1)
+        self.f = (
+            lambda x: args.std_fixed * torch.ones_like(x)
+            if args.std_fixed > 0
+            else F.softplus(x)
+        )
+
+    def model(self) -> Dict[str, Tensor]:
+        # p(c), class_label dist
+        pc = dist.Bernoulli(logits=self.c_logit).to_event(1)
+        class_label = pyro.sample("class_label", pc)
+
+        # p(b), bias_label dist
+        pb = dist.Bernoulli(logits=self.b_logit).to_event(1)
+        bias_label = pyro.sample("bias_label", pb)
+
+
+        return {
+            "class_label": class_label,
+            "bias_label": bias_label,
+        }
+
+    def guide(self, **obs) -> None:
+        # guide for (optional) semi-supervised learning
+        pyro.module("SimBAPGM", self)
+        with pyro.plate("observations", obs["x"].shape[0]):
+            # q(c | x)
+            if obs["class_label"] is None:
+                c_prob = torch.sigmoid(self.encoder_c(obs["x"]))
+                c = pyro.sample("class_label", dist.Bernoulli(probs=c_prob).to_event(1))
+
+            # q(b | x)
+            if obs["bias_label"] is None:
+                b_prob = torch.sigmoid(self.encoder_b(obs["x"]))
+                b = pyro.sample("bias_label", dist.Bernoulli(probs=b_prob).to_event(1))
+
+    def model_anticausal(self, **obs) -> None:
+        # assumes all variables are observed
+        pyro.module("SimBAPGM", self)
+        with pyro.plate("observations", obs["x"].shape[0]):
+
+            # q(c | x)
+            c_prob = torch.sigmoid(self.encoder_c(obs["x"]))
+            qc_x = dist.Bernoulli(probs=c_prob).to_event(1)
+            pyro.sample("class_label_aux", qc_x, obs=obs["class_label"])
+
+            # q(b | x)
+            b_prob = torch.sigmoid(self.encoder_b(obs["x"]))
+            qb_x = dist.Bernoulli(probs=b_prob).to_event(1)
+            pyro.sample("bias_label_aux", qb_x, obs=obs["bias_label"])
+
+    def predict(self, **obs) -> Dict[str, Tensor]:
+
+        # q(c | x)
+        c_prob = torch.sigmoid(self.encoder_c(obs["x"]))
+
+        # q(b | x)
+        b_prob = torch.sigmoid(self.encoder_b(obs["x"]))
+
+
+        return {
+            "class_label": c_prob,
+            "bias_label": b_prob,
+        }
+
+    def svi_model(self, **obs) -> None:
+        with pyro.plate("observations", obs["x"].shape[0]):
+            pyro.condition(self.model, data=obs)()
+
+    def guide_pass(self, **obs) -> None:
+        pass
 
 
 class FlowPGM(BasePGM):
