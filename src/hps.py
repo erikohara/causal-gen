@@ -41,6 +41,17 @@ cmnist.parents_x = ["digit", "colour"]
 cmnist.context_dim = 20
 HPARAMS_REGISTRY["cmnist"] = cmnist
 
+simba = Hparams()
+simba.lr = 1e-3
+simba.bs = 32
+simba.wd = 0.1
+simba.z_dim = 16
+simba.input_res = 192
+simba.pad = 19
+simba.enc_arch = "192b1d2,96b3d2,48b7d2,24b11d2,12b7d2,6b3d6,1b2"
+simba.dec_arch = "1b2,6b4,12b8,24b12,48b8,96b4,192b2"
+simba.widths = [32, 64, 96, 128, 160, 192, 512]
+HPARAMS_REGISTRY["simba"] = simba
 
 ukbb64 = Hparams()
 ukbb64.lr = 1e-3
