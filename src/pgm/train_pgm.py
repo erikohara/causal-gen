@@ -16,7 +16,7 @@ from tqdm import tqdm
 from utils_pgm import plot_joint, update_stats
 
 sys.path.append("..")
-from datasets import cmnist, get_attr_max_min, mimic, morphomnist, ukbb
+from datasets import cmnist, get_attr_max_min, mimic, morphomnist, ukbb, simba
 from hps import Hparams
 from train_setup import setup_directories, setup_logging, setup_tensorboard
 from utils import EMA, seed_all, seed_worker
@@ -28,7 +28,7 @@ def preprocess(
     if "x" in batch.keys():
         batch["x"] = (batch["x"].float().cuda() - 127.5) / 127.5  # [-1,1]
     # for all other variables except x
-    not_x = [k for k in batch.keys() if k != "x"]
+    not_x = [k for k in batch.keys() if k not in ["x","filename"]]
     for k in not_x:
         if split == "u":  # unlabelled
             batch[k] = None
@@ -244,6 +244,13 @@ def eval_epoch(
                     multi_class="ovr",
                     average="macro",
                 )
+        elif "simba" in args.dataset:
+            stats[k + "_rocauc"] = roc_auc_score(
+                targets[k].numpy(), preds[k].numpy(), average="macro"
+            )
+            stats[k + "_acc"] = (
+                targets[k] == torch.round(preds[k])
+            ).sum().item() / targets[k].shape[0]
         else:
             NotImplementedError
     return stats
@@ -269,6 +276,8 @@ def setup_dataloaders(args: Hparams) -> Dict[str, DataLoader]:
         datasets = cmnist(args)
     elif args.dataset == "mimic":
         datasets = mimic(args)
+    elif args.dataset == "simba":
+        datasets = simba(args)
     else:
         NotImplementedError
 
@@ -415,6 +424,10 @@ if __name__ == "__main__":
         from flow_pgm import ColourMNISTPGM
 
         model = ColourMNISTPGM(args)
+    elif args.dataset == "simba":
+        from flow_pgm import SimBAPGM
+
+        model = SimBAPGM(args)
     else:
         NotImplementedError
     ema = EMA(model, beta=0.999)
