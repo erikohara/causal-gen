@@ -19,6 +19,92 @@ from hps import Hparams
 from utils import log_standardize, normalize
 
 
+class SimBA(Dataset):
+    def __init__(
+        self,
+        root: str,
+        csv_file: str,
+        transform: Optional[torchvision.transforms.Compose],
+        columns: Optional[List[str]],
+        norm: Optional[str],
+        concat_pa=True,
+    ):
+        super().__init__()
+        self.root = root
+        self.transform = transform
+        self.concat_pa = concat_pa  # return concatenated parents
+
+        print(f"\nLoading csv data: {csv_file}")
+        self.df = pd.read_csv(csv_file)
+        self.columns = columns
+        if self.columns is None:
+            # ['eid', 'sex', 'age', 'brain_volume', 'ventricle_volume', 'mri_seq']
+            self.columns = list(self.df.columns)  # return all
+            self.columns.pop(0)  # remove redundant 'index' column
+        print(f"columns: {self.columns}")
+        self.samples = {i: torch.as_tensor(self.df[i]).float() for i in self.columns if i != "filename"}
+        self.samples["filename"] = self.df["filename"]
+
+        print(f"#samples: {len(self.df)}")
+        self.return_x = True if "filename" in self.columns else False
+
+    def __len__(self):
+        return len(self.df)
+
+    def __getitem__(self, idx: int) -> Dict[str, Tensor]:
+        sample = {k: v[idx] for k, v in self.samples.items()}
+
+        if self.return_x:
+            #mri_seq = "T1" if sample["mri_seq"] == 0.0 else "T2_FLAIR"
+            # Load scan
+            filename = sample["filename"]
+            filename = filename.split('.nii')[0]
+            x = Image.open(os.path.join(self.root, filename + '.tiff'))
+
+            if self.transform is not None:
+                sample["x"] = self.transform(x)
+            #sample.pop("filename", None)
+
+        if self.concat_pa:
+            sample["pa"] = torch.cat(
+                [torch.tensor([sample[k]]) for k in self.columns if k != "filename"], dim=0
+            )
+
+        return sample
+    
+def simba(args: Hparams) -> Dict[str, SimBA]:
+    # Load data
+
+    augmentation = {
+        "train": TF.Compose(
+            [
+                TF.Resize((args.input_res, args.input_res)),
+                TF.RandomCrop(
+                    size=(args.input_res, args.input_res),
+                    padding=[2 * args.pad, args.pad],
+                ),
+                TF.RandomHorizontalFlip(p=args.hflip),
+                TF.PILToTensor(),
+            ]
+        ),
+        "eval": TF.Compose(
+            [TF.Resize((args.input_res, args.input_res)), TF.PILToTensor()]
+        ),
+    }
+
+    datasets = {}
+    for split in ["train", "valid", "test"]:
+        datasets[split] = SimBA(
+            root=os.path.join(args.data_dir,split),
+            csv_file=os.path.join(args.data_dir, split + ".csv"),
+            transform=augmentation[("eval" if split != "train" else split)],
+            columns=(None if not args.parents_x else ["filename"] + args.parents_x),
+            norm=(None if not hasattr(args, "context_norm") else args.context_norm),
+            concat_pa=(True if not hasattr(args, "concat_pa") else args.concat_pa),
+        )
+
+    return datasets
+
 class UKBBDataset(Dataset):
     def __init__(
         self,
