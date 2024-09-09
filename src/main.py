@@ -27,6 +27,7 @@ def main(args: Hparams):
     if args.resume:
         if os.path.isfile(args.resume):
             print(f"\nLoading checkpoint: {args.resume}")
+            ckpt_folder = args.resume.split('/checkpoint.pt')[0]
             ckpt = torch.load(args.resume)
             ckpt_args = {k: v for k, v in ckpt["hparams"].items() if k != "resume"}
             if args.data_dir is not None:
@@ -58,7 +59,10 @@ def main(args: Hparams):
 
     # setup model save directory, logging and tensorboard summaries
     assert args.exp_name != "", "No experiment name given."
-    args.save_dir = setup_directories(args)
+    if args.resume:
+        args.save_dir = ckpt_folder
+    else:
+        args.save_dir = setup_directories(args)
     writer = setup_tensorboard(args, model)
     logger = setup_logging(args)
 
@@ -66,7 +70,8 @@ def main(args: Hparams):
     optimizer, scheduler = setup_optimizer(args, model)
 
     args.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-    torch.cuda.set_device(args.device)
+    if args.device == torch.device("cuda:0"):
+        torch.cuda.set_device(args.device)
     model.to(args.device)
     ema.to(args.device)
 
@@ -92,7 +97,8 @@ def main(args: Hparams):
     # train
     try:
         gc.collect()
-        torch.cuda.empty_cache()
+        if args.device == torch.device("cuda:0"):
+            torch.cuda.empty_cache()
         trainer(args, model, ema, dataloaders, optimizer, scheduler, writer, logger)
     except KeyboardInterrupt:
         print(traceback.format_exc())
