@@ -288,7 +288,7 @@ def setup_dataloaders(args: Hparams) -> Dict[str, DataLoader]:
         "worker_init_fn": seed_worker,
     }
     dataloaders = {}
-    if args.setup == "sup_pgm":
+    if args.setup in ["sup_pgm","hvae"]:
         dataloaders["train"] = DataLoader(
             datasets["train"], shuffle=True, drop_last=True, **kwargs
         )

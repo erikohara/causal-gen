@@ -271,7 +271,7 @@ class Decoder(nn.Module):
                         if block.cond_prior:  # z* if conditional prior
                             stat.update(
                                 dict(
-                                    z={"z": z, "q_loc": q_loc, "q_logscale": q_logscale}
+                                    {"z": z, "q_loc": q_loc, "q_logscale": q_logscale}
                                 )
                             )
                         else:  # z if exogenous prior
@@ -285,7 +285,7 @@ class Decoder(nn.Module):
                         z = sample_gaussian(p_loc, p_logscale)
                         if abduct and block.cond_prior:  # for abducting z*
                             stats.append(
-                                dict(z={"p_loc": p_loc, "p_logscale": p_logscale})
+                                dict({"p_loc": p_loc, "p_logscale": p_logscale})
                             )
             else:  # deterministic block
                 z = p_loc
@@ -425,7 +425,7 @@ class DGaussNet(nn.Module):
 class HVAE(nn.Module):
     def __init__(self, args: Hparams):
         super().__init__()
-        args.vr = "light" if "ukbb" in args.hps else None  # hacky
+        #args.vr = "light" if "ukbb" in args.hps else None  # hacky
         self.encoder = Encoder(args)
         self.decoder = Decoder(args)
         if args.x_like.split("_")[1] == "dgauss":

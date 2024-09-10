@@ -35,7 +35,7 @@ class DSCM(nn.Module):
         cf_particles: int = 1,
         t_abduct: float = 1.0,
     ) -> Dict[str, Tensor]:
-        pa = {k: v for k, v in obs.items() if k != "x"}
+        pa = {k: v for k, v in obs.items() if k not in ["x","filename"]}
         # forward vae with factual parents
         _pa = vae_preprocess(self.args, {k: v.clone() for k, v in pa.items()})
         vae_out = self.vae(obs["x"], _pa, beta=self.args.beta)

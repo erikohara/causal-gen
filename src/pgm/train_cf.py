@@ -8,7 +8,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import matplotlib.pyplot as plt
 import torch
 from dscm import DSCM
-from flow_pgm import FlowPGM
+from flow_pgm import SimBAPGM
 from layers import TraceStorage_ELBO
 from sklearn.metrics import roc_auc_score
 from torch import Tensor, nn
@@ -32,7 +32,7 @@ def loginfo(title: str, logger: Any, stats: Dict[str, Any]):
 def inv_preprocess(pa: Dict[str, Tensor]) -> Dict[str, Tensor]:
     # undo [-1,1] parent preprocessing back to original range
     for k, v in pa.items():
-        if k != "mri_seq" and k != "sex":
+        if k != "class_label" and k != "bias_label":
             pa[k] = (v + 1) / 2  # [-1,1] -> [0,1]
             _max, _min = get_attr_max_min(k)
             pa[k] = pa[k] * (_max - _min) + _min
@@ -50,8 +50,8 @@ def save_plot(
     _ = plot_cf(
         obs["x"],
         cfs["x"],
-        inv_preprocess({k: v for k, v in obs.items() if k != "x"}),  # pa
-        inv_preprocess({k: v for k, v in cfs.items() if k != "x"}),  # cf_pa
+        inv_preprocess({k: v for k, v in obs.items() if k not in ["x","filename"] }),  # pa
+        inv_preprocess({k: v for k, v in cfs.items() if k not in ["x","filename"] }),  # cf_pa
         inv_preprocess(do),
         var_cf_x,  # counterfactual variance per pixel
         num_images=num_images,
@@ -103,6 +103,13 @@ def get_metrics(
                     multi_class="ovr",
                     average="macro",
                 )
+        elif "simba" in args.dataset:
+            stats[k + "_rocauc"] = roc_auc_score(
+                targets[k].numpy(), preds[k].numpy(), average="macro"
+            )
+            stats[k + "_acc"] = (
+                targets[k] == torch.round(preds[k])
+            ).sum().item() / targets[k].shape[0]
         else:
             NotImplementedError
     return stats
@@ -223,6 +230,7 @@ def cf_epoch(
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--exp_name", help="experiment name.", type=str, default="")
+    parser.add_argument("--dataset", help="Dataset name.", type=str, default="ukbb")
     parser.add_argument(
         "--data_dir", help="data directory to load form.", type=str, default=""
     )
@@ -282,6 +290,7 @@ if __name__ == "__main__":
         "--cf_particles", help="num counterfactual samples.", type=int, default=1
     )
     args = parser.parse_known_args()[0]
+    print(args.dataset)
 
     # update hparams if loading checkpoint
     if args.load_path:
@@ -304,7 +313,7 @@ if __name__ == "__main__":
     predictor_checkpoint = torch.load(args.predictor_path)
     predictor_args = Hparams()
     predictor_args.update(predictor_checkpoint["hparams"])
-    predictor = FlowPGM(predictor_args).cuda()
+    predictor = SimBAPGM(predictor_args).cuda()
     predictor.load_state_dict(predictor_checkpoint["ema_model_state_dict"])
 
     # for backwards compatibility
@@ -337,7 +346,7 @@ if __name__ == "__main__":
     pgm_checkpoint = torch.load(args.pgm_path)
     pgm_args = Hparams()
     pgm_args.update(pgm_checkpoint["hparams"])
-    pgm = FlowPGM(pgm_args).cuda()
+    pgm = SimBAPGM(pgm_args).cuda()
     pgm.load_state_dict(pgm_checkpoint["ema_model_state_dict"])
 
     # for backwards compatibility
@@ -359,13 +368,15 @@ if __name__ == "__main__":
     vae_args.update(vae_checkpoint["hparams"])
     if not hasattr(vae_args, "cond_prior"):  # for backwards compatibility
         vae_args.cond_prior = False
-    vae_args.kl_free_bits = vae_args.free_bits
+    vae_args.kl_free_bits = vae_args.kl_free_bits
     vae = HVAE(vae_args).cuda()
     vae.load_state_dict(vae_checkpoint["ema_model_state_dict"])
 
     # vae_args.data_dir = None  # adjust data_dir as needed
     if args.data_dir != "":
         vae_args.data_dir = args.data_dir
+    vae_args.dataset = args.dataset
+    vae_args.setup = "hvae"
     dataloaders = setup_dataloaders(vae_args)
 
     @torch.no_grad()
